@@ -256,7 +256,7 @@ cmd_verify(){
   local others="" ns=0 p a
   for p in $(ls -l /proc/*/exe 2>/dev/null | grep 'iptv_xtream_codes/php/.*(deleted)' | grep -oE '/proc/[0-9]+' | cut -d/ -f3); do
     a=$(ps -o args= -p "$p" 2>/dev/null) || continue; [ -n "$a" ] || continue
-    case "$a" in XtreamCodes\[*) ns=$((ns+1));; *) others="$others$(ps -o pid=,etime=,args= -p "$p" | cut -c1-120)\n";; esac
+    case "$a" in XtreamCodes\[*) ns=$((ns+1));; *) others="$others$(ps -o pid= -o etime= -o args= -p "$p" | cut -c1-120)\n";; esac
   done
   if [ -z "$others" ]; then ok "no old PHP processes left (pools, tools, crons)"
   else warn "still on the old PHP:"; printf "$others" | sed 's/^/    /'; bad=1
