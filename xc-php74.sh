@@ -77,6 +77,7 @@ restart_old_tools(){ # any long-running tools/*.php still on the old PHP: stop i
 
 viewers(){ # workers that sent >100 KB in 5 s = active streams
   local c m p a b n
+  mkdir -p "$D"
   for c in $(pools); do
     m=$(master "$c"); [ -n "$m" ] || { echo "  $c: not running"; continue; }
     for p in $(ps -o pid= --ppid "$m"); do echo "$p $(awk '/wchar/{print $2}' /proc/$p/io 2>/dev/null)"; done > "$D/.w.$c"
