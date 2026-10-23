@@ -51,11 +51,13 @@ api_test(){ # main server: player_api.php answers JSON. Load balancer: a stream 
     out=$(wget -q -T 5 -O- "http://127.0.0.1:$port/player_api.php?username=test&password=test" 2>/dev/null)
     if printf '%s' "$out" | grep -q '"user_info"'; then echo "$port player_api: $out"; return 0; fi
   done
-  local try seen="" w
+  local try seen="" w lg
   for try in 1 2 3 4; do   # right after pools restart on a busy node, nginx/XC can be slow to answer for a minute or two
     seen=""
     for port in $(nginx_ports); do
-      w=$(timeout 20 wget -S -T 15 -t 1 -O /dev/null "http://127.0.0.1:$port/live/test/test/1.ts" 2>&1)
+      # -o: own log file. Under 'timeout' with a terminal attached, wget thinks it is in the background and
+      # would otherwise divert its output to ./wget-log.N, leaving nothing to read.
+      lg=$(mktemp); timeout 20 wget -S -T 15 -t 1 -o "$lg" -O /dev/null "http://127.0.0.1:$port/live/test/test/1.ts" </dev/null; w=$(cat "$lg"); rm -f "$lg"
       code=$(printf '%s\n' "$w" | grep -m1 -oE 'HTTP/[0-9.]+ [0-9]{3}' | grep -oE '[0-9]{3}$')
       case "$code" in 401|403) echo "$port stream test: HTTP $code from XC's PHP (fake login rejected, as expected)"; return 0;; esac
       [ -n "$code" ] || code=$(printf '%s\n' "$w" | grep -m1 -oE 'failed: [^.]*|Read error[^.]*|No data received|Connection closed[^.]*|timed out' | head -1)
@@ -140,6 +142,7 @@ cmd_check(){
   say "== permissions"; say "  world-writable under $X: $(find "$X" \( -type f -o -type d \) -perm -o+w 2>/dev/null | wc -l)"
   say "== disk"; df -h /root | tail -1 | sed 's/^/  /'
   [ -d "$D/rollback" ] && say "  (a previous stage exists in $D)"
+  return 0
 }
 
 cmd_stage(){
