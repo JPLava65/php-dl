@@ -19,7 +19,7 @@ set -uo pipefail
 X=/home/xtreamcodes/iptv_xtream_codes
 P=$X/php
 D=/root/php74deploy
-PKG_URL=${PKG_URL:-https://github.com/JPLava65/php-dl/releases/download/v7.4.33-remi802c210/xc-php74.tar.gz}
+PKG_URL=${PKG_URL:-https://raw.githubusercontent.com/JPLava65/php-dl/main/xc-php74.tar.gz}
 PKG_SHA=44994e0d2f715dcf571da69ecf93d952e491aa59aa517b9e1f08868019e38dfa
 IC_URL=${IC_URL:-https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz}
 IONCUBE_SO=${IONCUBE_SO:-}          # optional: path to an ioncube_loader_lin_7.4.so already on this node
@@ -40,17 +40,39 @@ pools(){
   [ -n "$p" ] || p=$(ls "$P"/etc/*.conf 2>/dev/null | sed -E 's#.*/##; s#\.conf$##' | grep -v '^php-fpm$')
   printf '%s\n' $p
 }
-master(){ cat "$P/$1.pid" 2>/dev/null; }
+master(){ local m; m=$(cat "$P/$1.pid" 2>/dev/null); [ -n "$m" ] && kill -0 "$m" 2>/dev/null && echo "$m"; }   # live pid only
 is_old(){ readlink "/proc/$1/exe" 2>/dev/null | grep -q '(deleted)'; }   # running a replaced binary
 cur_ver(){ "$P/bin/php" -n -r 'echo PHP_VERSION;' 2>/dev/null; }
 
-api_test(){ # finds the client port by trying every nginx listen port
-  local port out
-  for port in $(grep -oE '^\s*listen +[0-9]+' "$X/nginx/conf/nginx.conf" 2>/dev/null | grep -oE '[0-9]+' | sort -u); do
+nginx_ports(){ grep -oE 'listen +[0-9]+' "$X/nginx/conf/nginx.conf" 2>/dev/null | grep -oE '[0-9]+' | sort -u; }
+api_test(){ # main server: player_api.php answers JSON. Load balancer: a stream URL with a fake login gets 401/403 from XC's PHP.
+  local port out code
+  for port in $(nginx_ports); do
     out=$(wget -q -T 5 -O- "http://127.0.0.1:$port/player_api.php?username=test&password=test" 2>/dev/null)
-    if printf '%s' "$out" | grep -q '"user_info"'; then echo "$port $out"; return 0; fi
+    if printf '%s' "$out" | grep -q '"user_info"'; then echo "$port player_api: $out"; return 0; fi
+  done
+  for port in $(nginx_ports); do
+    code=$(timeout 8 wget -S -T 5 -O /dev/null "http://127.0.0.1:$port/live/test/test/1.ts" 2>&1 | grep -m1 -oE 'HTTP/[0-9.]+ [0-9]{3}' | grep -oE '[0-9]{3}$')
+    case "$code" in 401|403) echo "$port stream test: HTTP $code from XC's PHP (fake login rejected, as expected)"; return 0;; esac
   done
   return 1
+}
+old_cli_pids(){ # PHP command-line processes still running a replaced (old) bin/php
+  ls -l /proc/*/exe 2>/dev/null | grep -E 'iptv_xtream_codes/php/bin/php(-cgi)? \(deleted\)' | grep -oE '/proc/[0-9]+' | cut -d/ -f3
+}
+restart_old_tools(){ # any long-running tools/*.php still on the old PHP: stop it, let XC respawn it, else start it as before
+  local p args t new i
+  for p in $(old_cli_pids); do
+    args=$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null); t=$(printf '%s' "$args" | grep -oE 'tools/[A-Za-z0-9_]+\.php' | head -1)
+    [ -n "$t" ] || { say "  pid $p: ${args:0:90} - not a tool, left to finish on its own"; continue; }
+    say "  $t (pid $p) is still on the old PHP - stopping it, waiting up to 70s for XC to restart it"
+    kill "$p"; for i in $(seq 70); do sleep 1; new=$(pgrep -u xtreamcodes -f "php/bin/php .*$t" | head -1); [ -n "$new" ] && ! is_old "$new" && break; new=""; done
+    if [ -z "$new" ]; then
+      setsid sudo -u xtreamcodes "$P/bin/php" ${args#* } >/dev/null 2>&1 < /dev/null &
+      sleep 3; new=$(pgrep -u xtreamcodes -f "php/bin/php .*$t" | head -1)
+      [ -n "$new" ] && ok "$t started by script (pid $new)" || warn "$t did not start - check it"
+    else ok "$t restarted by XC (pid $new, $(readlink /proc/$new/exe))"; fi
+  done
 }
 
 viewers(){ # workers that sent >100 KB in 5 s = active streams
@@ -68,12 +90,14 @@ viewers(){ # workers that sent >100 KB in 5 s = active streams
   done
 }
 
-restart_pool(){ # $1 = pool name
+restart_pool(){ # $1 = pool name; starts it if it is down
   local c=$1 old new i
-  old=$(master "$c"); [ -n "$old" ] || die "$c: no pid file"
-  kill -TERM "$old" || die "$c: could not signal master $old"
-  for i in $(seq 300); do kill -0 "$old" 2>/dev/null || break; sleep 0.2; done
-  kill -0 "$old" 2>/dev/null && die "$c: master $old did not exit within 60s - investigate before continuing"
+  old=$(master "$c")
+  if [ -n "$old" ]; then
+    kill -TERM "$old" || die "$c: could not signal master $old"
+    for i in $(seq 300); do kill -0 "$old" 2>/dev/null || break; sleep 0.2; done
+    kill -0 "$old" 2>/dev/null && die "$c: master $old did not exit within 60s - investigate before continuing"
+  else warn "$c was not running - starting it"; old="none"; fi
   start-stop-daemon --start --quiet --pidfile "$P/$c.pid" --exec "$P/sbin/php-fpm" -- --daemonize --fpm-config "$P/etc/$c.conf" \
     || die "$c: php-fpm failed to start - run: $0 rollback"
   for i in $(seq 25); do [ -S "$P/$c.sock" ] && [ -n "$(master "$c")" ] && break; sleep 0.2; done
@@ -179,7 +203,7 @@ cmd_canary(){
   local c=${1:-$(pools | head -1)}
   say "== viewers now"; viewers
   restart_pool "$c"
-  sleep 3; say "== API"; r=$(api_test) && ok "port ${r%% *}: ${r#* }" || warn "no nginx port answered player_api.php - check manually"
+  sleep 3; say "== PHP through nginx"; r=$(api_test) && ok "port ${r%% *} ${r#* }" || warn "PHP did not answer through nginx - check before finish"
   say "== php-fpm log"; tail -3 "$P/var/log/php-fpm.log" | sed 's/^/  /'
   say "CANARY DONE - if OK: $0 finish   |   if not: $0 rollback"
 }
@@ -187,8 +211,9 @@ cmd_canary(){
 cmd_finish(){
   need_root; [ "$(cur_ver)" = "$NEWVER" ] || die "run swap first"
   local c m
-  for c in $(pools); do m=$(master "$c"); [ -n "$m" ] && is_old "$m" && restart_pool "$c"; done
+  for c in $(pools); do m=$(master "$c"); { [ -z "$m" ] || is_old "$m"; } && restart_pool "$c"; done
   restart_tool pipe_reader.php; restart_tool signal_receiver.php
+  restart_old_tools
   sleep 2; cmd_verify
 }
 
@@ -200,8 +225,11 @@ cmd_verify(){
     elif is_old "$m"; then warn "$c still on the old binary"; bad=1
     else ok "$c master $m, $(pgrep -c -P "$m") workers"; fi; done
   n=$(ls -l /proc/*/exe 2>/dev/null | grep -c 'iptv_xtream_codes/php/.*(deleted)')
-  [ "$n" = 0 ] && ok "no old PHP processes left" || { warn "$n processes still on the old PHP"; bad=1; }
-  r=$(api_test) && ok "API port ${r%% *}: ${r#* }" || warn "no nginx port answered player_api.php"
+  if [ "$n" = 0 ]; then ok "no old PHP processes left"; else warn "$n processes still on the old PHP:"; bad=1
+    for p in $(ls -l /proc/*/exe 2>/dev/null | grep 'iptv_xtream_codes/php/.*(deleted)' | grep -oE '/proc/[0-9]+' | cut -d/ -f3); do
+      say "    $(ps -o pid=,etime=,args= -p "$p" | cut -c1-120)"; done
+    say "    (a crons/*.php entry just finishes on its own; a tools/*.php entry: run '$0 finish' again)"; fi
+  r=$(api_test) && ok "port ${r%% *} ${r#* }" || { warn "PHP did not answer through nginx (player_api.php or stream URL)"; bad=1; }
   e=$(fpmlog_errors 3); [ -z "$e" ] && ok "php-fpm.log: no errors" || { warn "php-fpm.log errors:"; say "$e" | sed 's/^/    /'; }
   [ $bad = 0 ] && say "VERIFY OK - PHP $(cur_ver)" || say "VERIFY: see warnings above"
 }
@@ -212,8 +240,9 @@ cmd_rollback(){
     cp -p "$D/rollback/$(basename "$f")" "$P/$f.rb" && mv -f "$P/$f.rb" "$P/$f" || die "restore of $f failed"; done
   rm -f "$P/bin/php.new" "$P/bin/php-cgi.new" "$P/sbin/php-fpm.new" "$P/lib/php.ini.new"
   ok "files restored: PHP $(cur_ver)"
-  for c in $(pools); do m=$(master "$c"); [ -n "$m" ] && is_old "$m" && restart_pool "$c"; done
+  for c in $(pools); do m=$(master "$c"); { [ -z "$m" ] || is_old "$m"; } && restart_pool "$c"; done
   restart_tool pipe_reader.php; restart_tool signal_receiver.php
+  restart_old_tools
   say "ROLLED BACK to PHP $(cur_ver)"
 }
 

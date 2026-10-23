@@ -11,7 +11,7 @@
 
 | File | sha256 |
 |---|---|
-| `xc-php74.tar.gz` (release `v7.4.33-remi802c210`) | `44994e0d2f715dcf571da69ecf93d952e491aa59aa517b9e1f08868019e38dfa` |
+| `xc-php74.tar.gz` (in this repo) | `44994e0d2f715dcf571da69ecf93d952e491aa59aa517b9e1f08868019e38dfa` |
 
 ## Deploying to a node
 
@@ -21,7 +21,7 @@ bash xc-php74.sh check      # read-only
 bash xc-php74.sh stage      # download, verify, test, back up; no live change
 bash xc-php74.sh swap       # crons move to 7.4
 bash xc-php74.sh canary     # one php-fpm pool -> 7.4 (cuts that pool's viewers; apps reconnect)
-bash xc-php74.sh finish     # remaining pools + pipe_reader.php, then verify
+bash xc-php74.sh finish     # remaining pools + pipe_reader / signal_receiver / other tools, then verify
 bash xc-php74.sh perms      # optional: remove world-write permission under /home/xtreamcodes
 bash xc-php74.sh rollback   # back to the previous PHP at any point
 ```
@@ -39,6 +39,6 @@ The build kit is in `build/`. Run this on any Linux machine or Docker Desktop:
 ```
 cd build && docker build --target out --output type=local,dest=./out .
 ```
-`fetch.sh` checks every source against pinned SHA-256 hashes and git commits. To pick up newer Remi fixes, update the `php` commit in `fetch.sh` and `PKG_SHA` / `PKG_URL` in `xc-php74.sh`, then rebuild and publish a new release.
+`fetch.sh` checks every source against pinned SHA-256 hashes and git commits. To pick up newer Remi fixes, update the `php` commit in `fetch.sh`, rebuild, replace `xc-php74.tar.gz` in this repo and update `PKG_SHA` in `xc-php74.sh`.
 
 See `RUNBOOK.md` for the verification results and the main-server deployment record.
