@@ -186,18 +186,23 @@ cmd_stage(){
   [ "$TEST" = 1 ] && sed -i -E 's/^(zend_extension=ioncube)/;\1/' php.ini.74
   diff "$P/lib/php.ini" php.ini.74 | sed 's/^/  /'
   say "== test new PHP with this node's php.ini"
-  v=$("$S/bin/php" -c php.ini.74 -d extension_dir="$E" -v 2>&1); printf '%s\n' "$v" | sed 's/^/  /'
+  # Same-API nodes (PHP 7.4.x) may load extra extension files we don't ship (e.g. igbinary.so). They stay in the
+  # live folder and keep loading after the swap, so test the new PHP with them in place.
+  for f in "$P/lib/php/extensions/$EXT74"/*.so; do [ -e "$f" ] || continue; b=$(basename "$f")
+    [ -e "$E/$b" ] || { cp -p "$f" "$E/$b" && say "  using this node's own $b (same PHP 7.4 extension API)"; }; done
+  PT="-c php.ini.74 -d extension_dir=$E -d display_startup_errors=1"   # surface 'Unable to load dynamic library'
+  v=$("$S/bin/php" $PT -v 2>&1); printf '%s\n' "$v" | sed 's/^/  /'
   printf '%s' "$v" | grep -q "PHP $NEWVER" || die "new php does not start"
   printf '%s' "$v" | grep -qiE 'warning|failed' && die "new php prints warnings at startup (see above)"
   [ "$TEST" = 1 ] || printf '%s' "$v" | grep -q 'ionCube PHP Loader' || die "ionCube loader not loaded"
-  m=$("$S/bin/php" -c php.ini.74 -d extension_dir="$E" -m)
+  m=$("$S/bin/php" $PT -m 2>/dev/null)
   for x in geoip mcrypt curl openssl mysqli pdo_mysql mbstring zip xsl; do printf '%s\n' "$m" | grep -qx "$x" || die "module $x missing"; done
   oldm=$("$P/bin/php" -m 2>/dev/null | grep -vE '^\[|^$' | grep -viE 'opcache|ioncube' | tr 'A-Z' 'a-z' | sort -u)
   newm=$(printf '%s\n' "$m" | grep -vE '^\[|^$' | grep -viE 'opcache|ioncube' | tr 'A-Z' 'a-z' | sort -u)
-  miss=$(comm -23 <(printf '%s\n' "$oldm") <(printf '%s\n' "$newm") | tr '\n' ' ')
+  miss=$(comm -23 <(printf '%s\n' "$oldm") <(printf '%s\n' "$newm") | grep -vx 'readline' | tr '\n' ' ')   # readline: interactive CLI only
   if [ -n "${miss// /}" ]; then [ "$TEST" = 1 ] && warn "XC_TEST=1: current PHP has extra modules: $miss" || die "current PHP $(cur_ver) has extensions the new build lacks: $miss"; fi
   ok "modules present (everything the current PHP $(cur_ver) loads is covered)"
-  for c in $(pools); do "$S/sbin/php-fpm" -t -c php.ini.74 -d extension_dir="$E" --fpm-config "$P/etc/$c.conf" 2>&1 | grep -q "test is successful" || die "php-fpm -t failed for $c"; done
+  for c in $(pools); do "$S/sbin/php-fpm" -t $PT --fpm-config "$P/etc/$c.conf" 2>&1 | grep -q "test is successful" || die "php-fpm -t failed for $c"; done
   ok "php-fpm config test passed for: $(pools | tr '\n' ' ')"
   bad=$(cd "$X" && find admin wwwdir crons tools -name '*.php' -size -2M 2>/dev/null | while read -r f; do
           grep -q 'ionCube Loader' "$f" && continue; "$S/bin/php" -n -l "$f" >/dev/null 2>&1 || echo "$f"; done)
