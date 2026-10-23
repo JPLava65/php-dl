@@ -51,10 +51,16 @@ api_test(){ # main server: player_api.php answers JSON. Load balancer: a stream 
     out=$(wget -q -T 5 -O- "http://127.0.0.1:$port/player_api.php?username=test&password=test" 2>/dev/null)
     if printf '%s' "$out" | grep -q '"user_info"'; then echo "$port player_api: $out"; return 0; fi
   done
-  for port in $(nginx_ports); do
-    code=$(timeout 8 wget -S -T 5 -O /dev/null "http://127.0.0.1:$port/live/test/test/1.ts" 2>&1 | grep -m1 -oE 'HTTP/[0-9.]+ [0-9]{3}' | grep -oE '[0-9]{3}$')
-    case "$code" in 401|403) echo "$port stream test: HTTP $code from XC's PHP (fake login rejected, as expected)"; return 0;; esac
+  local try seen=""
+  for try in 1 2 3; do   # XC can be slow to reject a bad login right after pools restart on a busy node
+    for port in $(nginx_ports); do
+      code=$(timeout 30 wget -S -T 25 -t 1 -O /dev/null "http://127.0.0.1:$port/live/test/test/1.ts" 2>&1 | grep -m1 -oE 'HTTP/[0-9.]+ [0-9]{3}' | grep -oE '[0-9]{3}$')
+      case "$code" in 401|403) echo "$port stream test: HTTP $code from XC's PHP (fake login rejected, as expected)"; return 0;; esac
+      seen="$seen $port=${code:-no-reply}"
+    done
+    sleep 3
   done
+  echo "  [info] last results:$seen" >&2
   return 1
 }
 old_cli_pids(){ # PHP command-line processes still running a replaced (old) bin/php
