@@ -129,7 +129,7 @@ restart_tool(){ # $1 = tools/<name>.php ; only if it is currently running
   [ -n "$pid" ] && ok "$t restarted (pid $pid, $(readlink /proc/$pid/exe))" || warn "$t did not come back - check it"
 }
 
-fpmlog_errors(){ grep -E "ERROR|ALERT" "$P/var/log/php-fpm.log" 2>/dev/null | tail -${1:-5}; }
+fpmlog_errors(){ grep -F "[$(LC_ALL=C date +%d-%b-%Y) " "$P/var/log/php-fpm.log" 2>/dev/null | grep -E "ERROR|ALERT" | tail -${1:-5}; }   # today only
 
 cmd_check(){
   say "== node"; say "  $(lsb_release -ds 2>/dev/null || grep PRETTY /etc/os-release | cut -d'"' -f2)"
