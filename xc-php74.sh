@@ -108,6 +108,14 @@ viewers(){ # workers that sent >100 KB in 5 s = active streams
   done
 }
 
+pool_listen(){ sed -nE 's/^\s*listen\s*=\s*//p' "$P/etc/$1.conf" 2>/dev/null | head -1 | tr -d ' "\r'; }
+listening(){ # unix socket path, or [host:]port (TCP pools, e.g. 127.0.0.1:60900)
+  local l; l=$(pool_listen "$1"); [ -n "$l" ] || l="$P/$1.sock"
+  case "$l" in
+    /*) [ -S "$l" ] ;;
+    *)  ss -ltn 2>/dev/null | awk '{print $4}' | grep -qE "(^|:)${l##*:}$" ;;
+  esac
+}
 restart_pool(){ # $1 = pool name; starts it if it is down
   local c=$1 old new i
   old=$(master "$c")
@@ -118,9 +126,10 @@ restart_pool(){ # $1 = pool name; starts it if it is down
   else warn "$c was not running - starting it"; old="none"; fi
   start-stop-daemon --start --quiet --pidfile "$P/$c.pid" --exec "$P/sbin/php-fpm" -- --daemonize --fpm-config "$P/etc/$c.conf" \
     || die "$c: php-fpm failed to start - run: $0 rollback"
-  for i in $(seq 25); do [ -S "$P/$c.sock" ] && [ -n "$(master "$c")" ] && break; sleep 0.2; done
+  for i in $(seq 50); do [ -n "$(master "$c")" ] && listening "$c" && break; sleep 0.2; done
   new=$(master "$c")
-  [ -S "$P/$c.sock" ] || die "$c: socket missing after start - run: $0 rollback"
+  [ -n "$new" ] || die "$c: php-fpm master not running after start - run: $0 rollback"
+  listening "$c" || die "$c: not listening on $(pool_listen "$c") after start - run: $0 rollback"
   is_old "$new" && die "$c: new master $new still runs the old binary"
   ok "$c restarted: master $old -> $new ($(readlink /proc/$new/exe))"
 }
@@ -143,7 +152,7 @@ cmd_check(){
   say "== php.ini extension lines"; grep -nE '^\s*(extension_dir|zend_extension|extension)\s*=' "$P/lib/php.ini" | sed 's/^/  /'
   grep -qE '^\s*extension_dir\s*=' "$P/lib/php.ini" && warn "php.ini sets extension_dir explicitly - stage will stop; tell Claude"
   say "== pools (from start_services.sh)"; viewers
-  [ -f "$X/nginx/conf/balance.conf" ] && say "  balance.conf: $(grep -c 'server unix' "$X/nginx/conf/balance.conf") sockets, $(grep -oE 'least_conn|ip_hash' "$X/nginx/conf/balance.conf" | head -1)"
+  [ -f "$X/nginx/conf/balance.conf" ] && say "  balance.conf: $(grep -cE 'server +(unix:|[0-9])' "$X/nginx/conf/balance.conf") backends, $(grep -oE 'least_conn|ip_hash' "$X/nginx/conf/balance.conf" | head -1)"
   say "== tools"; for t in signal_receiver.php pipe_reader.php; do say "  $t: $(pgrep -u xtreamcodes -f "tools/$t" >/dev/null && echo running || echo 'not running')"; done
   say "== permissions"; say "  world-writable under $X: $(find "$X" \( -type f -o -type d \) -perm -o+w 2>/dev/null | wc -l)"
   say "== disk"; df -h /root | tail -1 | sed 's/^/  /'
