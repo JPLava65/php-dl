@@ -166,7 +166,7 @@ cmd_stage(){
   [ "$TEST" = 1 ] || ok "ionCube loader 7.4 in place"
   say "== php.ini"
   cp "$P/lib/php.ini" php.ini.74
-  sed -i -E 's/^(zend_extension=)ioncube_loader_lin_7\.[0-9]\.so\s*$/\1ioncube_loader_lin_7.4.so/;
+  sed -i -E 's#^(zend_extension\s*=\s*)("?)([^"]*/)?ioncube_loader_lin_[^"/[:space:]]*\.so"?\s*$#\1ioncube_loader_lin_7.4.so#;
              s/^(extension=(geoip|mcrypt)\.so)\s*$/;\1 ; built into PHP 7.4/' php.ini.74
   [ "$TEST" = 1 ] && sed -i -E 's/^(zend_extension=ioncube)/;\1/' php.ini.74
   diff "$P/lib/php.ini" php.ini.74 | sed 's/^/  /'
@@ -177,20 +177,31 @@ cmd_stage(){
   [ "$TEST" = 1 ] || printf '%s' "$v" | grep -q 'ionCube PHP Loader' || die "ionCube loader not loaded"
   m=$("$S/bin/php" -c php.ini.74 -d extension_dir="$E" -m)
   for x in geoip mcrypt curl openssl mysqli pdo_mysql mbstring zip xsl; do printf '%s\n' "$m" | grep -qx "$x" || die "module $x missing"; done
-  ok "modules present"
+  oldm=$("$P/bin/php" -m 2>/dev/null | grep -vE '^\[|^$' | grep -viE 'opcache|ioncube' | tr 'A-Z' 'a-z' | sort -u)
+  newm=$(printf '%s\n' "$m" | grep -vE '^\[|^$' | grep -viE 'opcache|ioncube' | tr 'A-Z' 'a-z' | sort -u)
+  miss=$(comm -23 <(printf '%s\n' "$oldm") <(printf '%s\n' "$newm") | tr '\n' ' ')
+  if [ -n "${miss// /}" ]; then [ "$TEST" = 1 ] && warn "XC_TEST=1: current PHP has extra modules: $miss" || die "current PHP $(cur_ver) has extensions the new build lacks: $miss"; fi
+  ok "modules present (everything the current PHP $(cur_ver) loads is covered)"
   for c in $(pools); do "$S/sbin/php-fpm" -t -c php.ini.74 -d extension_dir="$E" --fpm-config "$P/etc/$c.conf" 2>&1 | grep -q "test is successful" || die "php-fpm -t failed for $c"; done
   ok "php-fpm config test passed for: $(pools | tr '\n' ' ')"
   bad=$(cd "$X" && find admin wwwdir crons tools -name '*.php' -size -2M 2>/dev/null | while read -r f; do
           grep -q 'ionCube Loader' "$f" && continue; "$S/bin/php" -n -l "$f" >/dev/null 2>&1 || echo "$f"; done)
   [ -z "$bad" ] && ok "all non-encoded XC PHP files pass the 7.4 syntax check" || { say "$bad" | sed 's/^/  /'; die "files above fail PHP 7.4 syntax check"; }
   say "== backup"
-  if [ ! -d rollback ]; then
+  if [ ! -f rollback/php ]; then
     tar -czf php-old-backup.tgz -C "$X" --exclude='*.sock' --exclude='*.pid' php 2>/dev/null; [ -s php-old-backup.tgz ] || die "backup failed"
-    mkdir rollback && cp -p "$P/bin/php" "$P/bin/php-cgi" "$P/sbin/php-fpm" "$P/lib/php.ini" rollback/ || die "rollback copy failed"
+    mkdir -p rollback && cp -p "$P/bin/php" "$P/bin/php-cgi" "$P/sbin/php-fpm" "$P/lib/php.ini" rollback/ || die "rollback copy failed"
     ok "backup $(du -h php-old-backup.tgz | cut -f1), rollback copies of PHP $(cur_ver) saved"
   else ok "rollback copies already exist (kept)"; fi
   say "== place new files (inactive until swap)"
-  cp -a "$E" "$P/lib/php/extensions/" && cp -a "$S/ssl" "$P/" || die "copy failed"
+  L=$P/lib/php/extensions/$EXT74; mkdir -p "$L" "$D/rollback/ext"
+  for f in "$E"/*; do b=$(basename "$f")
+    if [ -e "$L/$b" ]; then   # same name already live (e.g. opcache.so of a PHP 7.4.x node): keep it, stage ours as .new
+      [ -e "$D/rollback/ext/$b" ] || cp -p "$L/$b" "$D/rollback/ext/$b" || die "backup of $L/$b failed"
+      cp -p "$f" "$L/$b.new" || die "copy of $b failed"
+    else cp -p "$f" "$L/$b" || die "copy of $b failed"; fi
+  done
+  cp -a "$S/ssl" "$P/" || die "copy failed"
   install -o xtreamcodes -g xtreamcodes -m 755 "$S/bin/php" "$P/bin/php.new" && \
   install -o xtreamcodes -g xtreamcodes -m 755 "$S/bin/php-cgi" "$P/bin/php-cgi.new" && \
   install -o xtreamcodes -g xtreamcodes -m 755 "$S/sbin/php-fpm" "$P/sbin/php-fpm.new" && \
@@ -205,6 +216,7 @@ cmd_swap(){
   say "  waiting for second :05 ..."; sleep $(( (65 - 10#$(date +%S)) % 60 ))
   mv -f "$P/lib/php.ini.new" "$P/lib/php.ini" && mv -f "$P/bin/php.new" "$P/bin/php" && \
   mv -f "$P/bin/php-cgi.new" "$P/bin/php-cgi" && mv -f "$P/sbin/php-fpm.new" "$P/sbin/php-fpm" || die "swap incomplete - run: $0 rollback"
+  for f in "$P/lib/php/extensions/$EXT74"/*.new; do [ -e "$f" ] && { mv -f "$f" "${f%.new}" || die "swap of $f failed - run: $0 rollback"; }; done
   ok "swapped at $(date +%T)"
   "$P/bin/php" -v | sed 's/^/  /'
   [ "$(cur_ver)" = "$NEWVER" ] || die "php is not $NEWVER after swap"
@@ -248,10 +260,12 @@ cmd_verify(){
 }
 
 cmd_rollback(){
-  need_root; [ -d "$D/rollback" ] || die "no $D/rollback"
+  need_root; [ -f "$D/rollback/php" ] || die "no rollback copies in $D/rollback"
   for f in bin/php bin/php-cgi sbin/php-fpm lib/php.ini; do
     cp -p "$D/rollback/$(basename "$f")" "$P/$f.rb" && mv -f "$P/$f.rb" "$P/$f" || die "restore of $f failed"; done
-  rm -f "$P/bin/php.new" "$P/bin/php-cgi.new" "$P/sbin/php-fpm.new" "$P/lib/php.ini.new"
+  rm -f "$P/bin/php.new" "$P/bin/php-cgi.new" "$P/sbin/php-fpm.new" "$P/lib/php.ini.new" "$P/lib/php/extensions/$EXT74"/*.new
+  for f in "$D"/rollback/ext/*; do [ -e "$f" ] || continue; b=$(basename "$f")
+    cp -p "$f" "$P/lib/php/extensions/$EXT74/$b.rb" && mv -f "$P/lib/php/extensions/$EXT74/$b.rb" "$P/lib/php/extensions/$EXT74/$b" || die "restore of extension $b failed"; done
   ok "files restored: PHP $(cur_ver)"
   for c in $(pools); do m=$(master "$c"); { [ -z "$m" ] || is_old "$m"; } && restart_pool "$c"; done
   restart_tool pipe_reader.php; restart_tool signal_receiver.php
