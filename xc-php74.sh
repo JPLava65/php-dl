@@ -44,7 +44,9 @@ master(){ local m; m=$(cat "$P/$1.pid" 2>/dev/null); [ -n "$m" ] && kill -0 "$m"
 is_old(){ readlink "/proc/$1/exe" 2>/dev/null | grep -q '(deleted)'; }   # running a replaced binary
 cur_ver(){ "$P/bin/php" -n -r 'echo PHP_VERSION;' 2>/dev/null; }
 
-nginx_ports(){ grep -oE 'listen +[0-9]+' "$X/nginx/conf/nginx.conf" 2>/dev/null | grep -oE '[0-9]+' | sort -u; }
+nginx_ports(){ # ports in the config (any file, any 'listen' form) + ports nginx is actually listening on (covers configs with no 'listen' = port 80)
+  { grep -rhoE 'listen\s+([0-9.]+:|\[::\]:)?[0-9]+' "$X/nginx/conf/" 2>/dev/null | grep -oE '[0-9]+$'
+    ss -ltnp 2>/dev/null | grep '"nginx"' | awk '{print $4}' | grep -oE '[0-9]+$'; } | sort -un; }
 api_test(){ # main server: player_api.php answers JSON. Load balancer: a stream URL with a fake login gets 401/403 from XC's PHP.
   local port out code
   for port in $(nginx_ports); do
