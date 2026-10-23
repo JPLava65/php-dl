@@ -51,14 +51,17 @@ api_test(){ # main server: player_api.php answers JSON. Load balancer: a stream 
     out=$(wget -q -T 5 -O- "http://127.0.0.1:$port/player_api.php?username=test&password=test" 2>/dev/null)
     if printf '%s' "$out" | grep -q '"user_info"'; then echo "$port player_api: $out"; return 0; fi
   done
-  local try seen=""
-  for try in 1 2 3; do   # XC can be slow to reject a bad login right after pools restart on a busy node
+  local try seen="" w
+  for try in 1 2 3 4; do   # right after pools restart on a busy node, nginx/XC can be slow to answer for a minute or two
+    seen=""
     for port in $(nginx_ports); do
-      code=$(timeout 30 wget -S -T 25 -t 1 -O /dev/null "http://127.0.0.1:$port/live/test/test/1.ts" 2>&1 | grep -m1 -oE 'HTTP/[0-9.]+ [0-9]{3}' | grep -oE '[0-9]{3}$')
+      w=$(timeout 20 wget -S -T 15 -t 1 -O /dev/null "http://127.0.0.1:$port/live/test/test/1.ts" 2>&1)
+      code=$(printf '%s\n' "$w" | grep -m1 -oE 'HTTP/[0-9.]+ [0-9]{3}' | grep -oE '[0-9]{3}$')
       case "$code" in 401|403) echo "$port stream test: HTTP $code from XC's PHP (fake login rejected, as expected)"; return 0;; esac
-      seen="$seen $port=${code:-no-reply}"
+      [ -n "$code" ] || code=$(printf '%s\n' "$w" | grep -m1 -oE 'failed: [^.]*|Read error[^.]*|No data received|Connection closed[^.]*|timed out' | head -1)
+      seen="$seen $port=[${code:-no output}]"
     done
-    sleep 3
+    [ $try -lt 4 ] && sleep 10
   done
   echo "  [info] last results:$seen" >&2
   return 1
