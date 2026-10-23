@@ -72,9 +72,11 @@ old_cli_pids(){ # PHP command-line processes still running a replaced (old) bin/
   ls -l /proc/*/exe 2>/dev/null | grep -E 'iptv_xtream_codes/php/bin/php(-cgi)? \(deleted\)' | grep -oE '/proc/[0-9]+' | cut -d/ -f3
 }
 restart_old_tools(){ # any long-running tools/*.php still on the old PHP: stop it, let XC respawn it, else start it as before
-  local p args t new i
+  local p args t new i ns=0
   for p in $(old_cli_pids); do
+    [ -r /proc/$p/cmdline ] || continue                                   # ended while we were looking
     args=$(tr '\0' ' ' < /proc/$p/cmdline 2>/dev/null); t=$(printf '%s' "$args" | grep -oE 'tools/[A-Za-z0-9_]+\.php' | head -1)
+    case "$args" in XtreamCodes\[*) ns=$((ns+1)); continue;; esac        # per-stream supervisor: never stop it (it would stop the stream)
     [ -n "$t" ] || { say "  pid $p: ${args:0:90} - not a tool, left to finish on its own"; continue; }
     say "  $t (pid $p) is still on the old PHP - stopping it, waiting up to 70s for XC to restart it"
     kill "$p"; for i in $(seq 70); do sleep 1; new=$(pgrep -u xtreamcodes -f "php/bin/php .*$t" | head -1); [ -n "$new" ] && ! is_old "$new" && break; new=""; done
@@ -84,6 +86,8 @@ restart_old_tools(){ # any long-running tools/*.php still on the old PHP: stop i
       [ -n "$new" ] && ok "$t started by script (pid $new)" || warn "$t did not start - check it"
     else ok "$t restarted by XC (pid $new, $(readlink /proc/$new/exe))"; fi
   done
+  [ $ns -gt 0 ] && say "  $ns per-stream XtreamCodes[...] processes still on the old PHP - left running (no web input; they move to 7.4 when their stream restarts)"
+  return 0
 }
 
 viewers(){ # workers that sent >100 KB in 5 s = active streams
@@ -249,11 +253,15 @@ cmd_verify(){
     if [ -z "$m" ]; then warn "$c not running"; bad=1
     elif is_old "$m"; then warn "$c still on the old binary"; bad=1
     else ok "$c master $m, $(pgrep -c -P "$m") workers"; fi; done
-  n=$(ls -l /proc/*/exe 2>/dev/null | grep -c 'iptv_xtream_codes/php/.*(deleted)')
-  if [ "$n" = 0 ]; then ok "no old PHP processes left"; else warn "$n processes still on the old PHP:"; bad=1
-    for p in $(ls -l /proc/*/exe 2>/dev/null | grep 'iptv_xtream_codes/php/.*(deleted)' | grep -oE '/proc/[0-9]+' | cut -d/ -f3); do
-      say "    $(ps -o pid=,etime=,args= -p "$p" | cut -c1-120)"; done
+  local others="" ns=0 p a
+  for p in $(ls -l /proc/*/exe 2>/dev/null | grep 'iptv_xtream_codes/php/.*(deleted)' | grep -oE '/proc/[0-9]+' | cut -d/ -f3); do
+    a=$(ps -o args= -p "$p" 2>/dev/null) || continue; [ -n "$a" ] || continue
+    case "$a" in XtreamCodes\[*) ns=$((ns+1));; *) others="$others$(ps -o pid=,etime=,args= -p "$p" | cut -c1-120)\n";; esac
+  done
+  if [ -z "$others" ]; then ok "no old PHP processes left (pools, tools, crons)"
+  else warn "still on the old PHP:"; printf "$others" | sed 's/^/    /'; bad=1
     say "    (a crons/*.php entry just finishes on its own; a tools/*.php entry: run '$0 finish' again)"; fi
+  [ $ns -gt 0 ] && say "  [info] $ns per-stream XtreamCodes[...] processes still on the old PHP: expected; no web input; each moves to 7.4 when its stream restarts"
   r=$(api_test) && ok "port ${r%% *} ${r#* }" || { warn "PHP did not answer through nginx (player_api.php or stream URL)"; bad=1; }
   e=$(fpmlog_errors 3); [ -z "$e" ] && ok "php-fpm.log: no errors" || { warn "php-fpm.log errors:"; say "$e" | sed 's/^/    /'; }
   [ $bad = 0 ] && say "VERIFY OK - PHP $(cur_ver)" || say "VERIFY: see warnings above"
