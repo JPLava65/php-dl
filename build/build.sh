@@ -30,9 +30,10 @@ copy(){ fresh "$1"; cp -a "$DL/$1" "$WORK/$1"; }
 mkdir -p "$DEPS/lib" "$DEPS/include"
 
 if done_ zlib; then echo "skip zlib"; else
-log "zlib 1.3.1"
-untar zlib-1.3.1.tar.gz zlib-1.3.1; cd "$WORK/zlib-1.3.1"
-./configure --prefix="$DEPS" --static >/dev/null && make -j"$JOBS" >/dev/null && make install >/dev/null
+log "zlib 1.3.2"
+untar zlib-1.3.2.tar.gz zlib-1.3.2; cd "$WORK/zlib-1.3.2"
+# -std=gnu99: zlib 1.3.2 assumes no vsnprintf on C89/90 (gcc 4.8 default) and stubs gzprintf().
+CFLAGS="$CFLAGS -std=gnu99" ./configure --prefix="$DEPS" --static >/dev/null && make -j"$JOBS" >/dev/null && make install >/dev/null
 mark zlib; fi
 
 if done_ openssl; then echo "skip openssl"; else
@@ -45,19 +46,19 @@ make -j"$JOBS" >/dev/null && make install_sw >/dev/null
 mark openssl; fi
 
 if done_ curl; then echo "skip curl"; else
-log "curl 8.10.1"
-untar curl-8.10.1.tar.gz curl-8.10.1; cd "$WORK/curl-8.10.1"
+log "curl 8.17.0"
+untar curl-8.17.0.tar.gz curl-8.17.0; cd "$WORK/curl-8.17.0"
 ./configure --prefix="$DEPS" --disable-shared --enable-static \
   --with-openssl="$DEPS" --with-zlib="$DEPS" \
   --with-ca-bundle=/etc/ssl/certs/ca-certificates.crt --with-ca-path=/etc/ssl/certs \
   --without-libpsl --without-libidn2 --without-nghttp2 --without-brotli --without-zstd \
-  --without-libssh2 --without-librtmp --without-gssapi --disable-ldap --disable-ldaps \
+  --without-libssh2 --without-gssapi --disable-ldap --disable-ldaps \
   --disable-docs --disable-manual >/dev/null
 make -j"$JOBS" >/dev/null && make install >/dev/null
 mark curl; fi
 
 if done_ libxml2; then echo "skip libxml2"; else
-log "libxml2 2.12.10"
+log "libxml2 2.13.9"
 copy libxml2; cd "$WORK/libxml2"
 ./configure --prefix="$DEPS" --disable-shared --enable-static --without-python \
   --without-lzma --without-icu --with-zlib="$DEPS" >/dev/null
@@ -65,7 +66,7 @@ make -j"$JOBS" >/dev/null && make install >/dev/null
 mark libxml2; fi
 
 if done_ libxslt; then echo "skip libxslt"; else
-log "libxslt 1.1.39"
+log "libxslt 1.1.43"
 copy libxslt; cd "$WORK/libxslt"
 ./configure --prefix="$DEPS" --disable-shared --enable-static --without-python \
   --without-crypto --with-libxml-prefix="$DEPS" >/dev/null
@@ -73,14 +74,14 @@ make -j"$JOBS" >/dev/null && make install >/dev/null
 mark libxslt; fi
 
 if done_ libpng; then echo "skip libpng"; else
-log "libpng 1.6.44"
+log "libpng 1.6.59"
 copy libpng; cd "$WORK/libpng"
 ./configure --prefix="$DEPS" --disable-shared --enable-static >/dev/null
 make -j"$JOBS" >/dev/null && make install >/dev/null
 mark libpng; fi
 
 if done_ freetype; then echo "skip freetype"; else
-log "freetype 2.13.3"
+log "freetype 2.14.3"
 copy freetype; cd "$WORK/freetype"
 ./configure --prefix="$DEPS" --disable-shared --enable-static --with-zlib=yes \
   --with-png=no --with-bzip2=no --with-harfbuzz=no --with-brotli=no >/dev/null
@@ -88,16 +89,16 @@ make -j"$JOBS" >/dev/null && make install >/dev/null
 mark freetype; fi
 
 if done_ onig; then echo "skip onig"; else
-log "oniguruma 6.9.9"
-untar onig-6.9.9.tar.gz onig-6.9.9; cd "$WORK/onig-6.9.9"
+log "oniguruma 6.9.10"
+untar onig-6.9.10.tar.gz onig-6.9.10; cd "$WORK/onig-6.9.10"
 ./configure --prefix="$DEPS" --disable-shared --enable-static >/dev/null
 make -j"$JOBS" >/dev/null && make install >/dev/null
 mark onig; fi
 
 if done_ libzip; then echo "skip libzip"; else
-log "libzip 1.11.2"
+log "libzip 1.11.4"
 untar cmake-3.20.6-linux-x86_64.tar.gz cmake-3.20.6-linux-x86_64
-untar libzip-1.11.2.tar.gz libzip-1.11.2; mkdir -p "$WORK/libzip-1.11.2/b"; cd "$WORK/libzip-1.11.2/b"
+untar libzip-1.11.4.tar.gz libzip-1.11.4; mkdir -p "$WORK/libzip-1.11.4/b"; cd "$WORK/libzip-1.11.4/b"
 "$WORK/cmake-3.20.6-linux-x86_64/bin/cmake" .. -DCMAKE_INSTALL_PREFIX="$DEPS" -DCMAKE_INSTALL_LIBDIR=lib \
   -DBUILD_SHARED_LIBS=OFF -DCMAKE_POSITION_INDEPENDENT_CODE=ON -DCMAKE_POLICY_DEFAULT_CMP0074=NEW -DZLIB_ROOT="$DEPS" \
   -DENABLE_BZIP2=OFF -DENABLE_LZMA=OFF -DENABLE_ZSTD=OFF -DENABLE_OPENSSL=OFF -DENABLE_GNUTLS=OFF \

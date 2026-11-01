@@ -104,3 +104,28 @@ Steps used (`X=/home/xtreamcodes/iptv_xtream_codes; P=$X/php; D=/root/php74deplo
 docker build --target out --output type=local,dest=./out .
 ```
 Fetch checks every download against pinned SHA-256 hashes and git commits. To pick up newer Remi fixes, change the `php` commit in `fetch.sh` and rebuild.
+
+## Release r2 (2026-10-31): security refresh, same deployment
+
+**Package:** `xc-php74.tar.gz` sha256 `dd2f24e939d16b6971a23a3805ab0a3597795570700223b268fee4ca1b632ef0`, build stamp
+`built: Oct 31 2026 20:57:05`. Built with `build/build.sh` in a debootstrap'd, signature-verified Ubuntu 14.04 root.
+
+- **PHP:** Remi `575c10c4` (was `802c2107`): GHSA-m8rr-4c36-8gq4 (CLI/CGI/FPM `-d` value check) and a DatePeriod
+  fix. GHSA-hrwm-9436-5mv3 is in ext/pgsql, which this build does not include.
+- **Libraries:** curl 8.10.1 → 8.17.0, libxml2 2.12.10 → 2.13.9, libxslt 1.1.39 → 1.1.43, libpng 1.6.44 → 1.6.59,
+  freetype 2.13.3 → 2.14.3, zlib 1.3.1 → 1.3.2 (built `-std=gnu99`, else gzprintf is stubbed on gcc 4.8),
+  libzip 1.11.2 → 1.11.4, oniguruma 6.9.9 → 6.9.10. OpenSSL stays 1.1.1w (see README for why).
+- **No JPEG/WebP yet** (I-35 deferred by Jay, 2026-10-31).
+
+| Check (r2) | Result |
+|---|---|
+| Starts, only system C library linked | 14.04, 16.04, 18.04, 20.04, 22.04, 24.04 |
+| Module list vs r1 | Identical (47) on all six |
+| Functional test of every extension (23 checks) | Pass on all six |
+| php-fpm (14.04, 24.04) | Runs as xtreamcodes; GET, POST, upload; 200/200 requests |
+| Out-of-memory fix | 50/50 normal requests after OOM requests; worker exits cleanly, no crashes |
+| HTTPS | Valid cert accepted; wrong host and self-signed rejected (system CA store). A 16.04 root with its 2016 `ca-certificates` can't verify current sites on r1 or r2 alike; keep `ca-certificates` updated |
+| PHP's own OpenSSL tests | Identical to r1 (128 pass / 26 fail, same tests) |
+| PHP's tests for libxml, dom, simplexml, xml, xsl, xmlreader, xmlwriter, curl, zlib, zip, mbstring, gd, date, pcre, json | 2,077 pass; 4 new message/format differences from libxml2 2.13 (warning → notice wording, entity-loader context), 1 from curl 8.17 (cookie expiry capped at 400 days); 1 previously failing test now passes |
+| Deploy script, r1 → r2 on a mock node (22.04) | check, stage, swap, canary, finish, verify OK; rollback returns to r1; re-stage on an r2 node stops |
+| ionCube | Not re-run (same PHP 7.4.33 ABI as r1); `stage` loads the 7.4 loader and stops if it doesn't |
