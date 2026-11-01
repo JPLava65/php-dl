@@ -1,5 +1,6 @@
 #!/bin/bash
-# xc-php74.sh - move an XC node from its bundled PHP 7.2/7.3 to the patched PHP 7.4 build.
+# xc-php74.sh - move an XC node from its bundled PHP 7.2/7.3 (or an earlier xc-php74 build) to the current
+# patched PHP 7.4 build. Release r2 (2026-10-31): Remi 575c10c4 + updated bundled libraries.
 # Repo: https://github.com/JPLava65/php-dl
 #
 # Run the stages in order, checking the output of each before the next:
@@ -10,7 +11,7 @@
 #   canary    restart ONE php-fpm pool on 7.4 and test the API          (cuts its viewers)
 #   finish    restart the other pools + pipe_reader.php, then verify    (cuts their viewers)
 #   verify    read-only: confirm everything runs 7.4
-#   rollback  restore the 7.2/7.3 files and restart all pools
+#   rollback  restore the previous PHP files (7.2/7.3 or the earlier 7.4 build) and restart all pools
 #   perms     remove world-write permission under /home/xtreamcodes (saves an undo list)
 #
 # Never runs start_services.sh, never touches nginx or ffmpeg processes.
@@ -18,13 +19,14 @@ set -uo pipefail
 
 X=/home/xtreamcodes/iptv_xtream_codes
 P=$X/php
-D=/root/php74deploy
+D=/root/php74deploy-r2          # per release, so rollback always returns to what ran before THIS release
 PKG_URL=${PKG_URL:-https://raw.githubusercontent.com/JPLava65/php-dl/main/xc-php74.tar.gz}
-PKG_SHA=44994e0d2f715dcf571da69ecf93d952e491aa59aa517b9e1f08868019e38dfa
+PKG_SHA=dd2f24e939d16b6971a23a3805ab0a3597795570700223b268fee4ca1b632ef0
 IC_URL=${IC_URL:-https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz}
 IONCUBE_SO=${IONCUBE_SO:-}          # optional: path to an ioncube_loader_lin_7.4.so already on this node
 EXT74=no-debug-non-zts-20190902
 NEWVER=7.4.33
+NEWBUILT='Oct 31 2026 20:57:05'      # build stamp of this release (php -v "built:"); tells r1 and r2 apart
 TEST=${XC_TEST:-0}                  # test harness only: skips ionCube assertions
 
 say(){ printf '%s\n' "$*"; }
@@ -43,6 +45,8 @@ pools(){
 master(){ local m; m=$(cat "$P/$1.pid" 2>/dev/null); [ -n "$m" ] && kill -0 "$m" 2>/dev/null && echo "$m"; }   # live pid only
 is_old(){ readlink "/proc/$1/exe" 2>/dev/null | grep -q '(deleted)'; }   # running a replaced binary
 cur_ver(){ "$P/bin/php" -n -r 'echo PHP_VERSION;' 2>/dev/null; }
+cur_built(){ "$P/bin/php" -n -v 2>/dev/null | head -1 | grep -oE 'built: [^)]*' | sed 's/^built: //'; }
+is_new(){ [ "$(cur_ver)" = "$NEWVER" ] && [ "$(cur_built)" = "$NEWBUILT" ]; }   # this release is live
 
 nginx_ports(){ # ports in the config (any file, any 'listen' form) + ports nginx is actually listening on (covers configs with no 'listen' = port 80)
   { grep -rhoE 'listen\s+([0-9.]+:|\[::\]:)?[0-9]+' "$X/nginx/conf/" 2>/dev/null | grep -oE '[0-9]+$'
@@ -148,7 +152,7 @@ fpmlog_errors(){ grep -F "[$(LC_ALL=C date +%d-%b-%Y) " "$P/var/log/php-fpm.log"
 
 cmd_check(){
   say "== node"; say "  $(lsb_release -ds 2>/dev/null || grep PRETTY /etc/os-release | cut -d'"' -f2)"
-  say "  PHP now: $(cur_ver)   php-fpm md5: $(md5sum "$P/sbin/php-fpm" | cut -c1-32)"
+  say "  PHP now: $(cur_ver) (built $(cur_built))   php-fpm md5: $(md5sum "$P/sbin/php-fpm" | cut -c1-32)"
   say "== php.ini extension lines"; grep -nE '^\s*(extension_dir|zend_extension|extension)\s*=' "$P/lib/php.ini" | sed 's/^/  /'
   grep -qE '^\s*extension_dir\s*=' "$P/lib/php.ini" && warn "php.ini sets extension_dir explicitly - stage will stop; tell Claude"
   say "== pools (from start_services.sh)"; viewers
@@ -162,7 +166,7 @@ cmd_check(){
 
 cmd_stage(){
   need_root
-  [ "$(cur_ver)" = "$NEWVER" ] && [ ! -d "$D/rollback" ] && die "this node already runs $NEWVER"
+  is_new && [ ! -d "$D/rollback" ] && die "this node already runs this release ($NEWVER built $NEWBUILT)"
   grep -qE '^\s*extension_dir\s*=' "$P/lib/php.ini" && die "php.ini sets extension_dir explicitly - not handled automatically"
   mkdir -p "$D" && cd "$D" || die "cannot use $D"
   say "== package"
@@ -193,6 +197,7 @@ cmd_stage(){
   PT="-c php.ini.74 -d extension_dir=$E -d display_startup_errors=1"   # surface 'Unable to load dynamic library'
   v=$("$S/bin/php" $PT -v 2>&1); printf '%s\n' "$v" | sed 's/^/  /'
   printf '%s' "$v" | grep -q "PHP $NEWVER" || die "new php does not start"
+  printf '%s' "$v" | grep -q "built: $NEWBUILT" || die "staged php is not this release (built $NEWBUILT)"
   printf '%s' "$v" | grep -qiE 'warning|failed' && die "new php prints warnings at startup (see above)"
   [ "$TEST" = 1 ] || printf '%s' "$v" | grep -q 'ionCube PHP Loader' || die "ionCube loader not loaded"
   m=$("$S/bin/php" $PT -m 2>/dev/null)
@@ -239,12 +244,12 @@ cmd_swap(){
   for f in "$P/lib/php/extensions/$EXT74"/*.new; do [ -e "$f" ] && { mv -f "$f" "${f%.new}" || die "swap of $f failed - run: $0 rollback"; }; done
   ok "swapped at $(date +%T)"
   "$P/bin/php" -v | sed 's/^/  /'
-  [ "$(cur_ver)" = "$NEWVER" ] || die "php is not $NEWVER after swap"
+  is_new || die "php is not $NEWVER built $NEWBUILT after swap"
   say "SWAPPED - crons use $NEWVER from the next minute; php-fpm still old until: $0 canary"
 }
 
 cmd_canary(){
-  need_root; [ "$(cur_ver)" = "$NEWVER" ] || die "run swap first"
+  need_root; is_new || die "run swap first"
   local c=${1:-$(pools | head -1)}
   say "== viewers now"; viewers
   restart_pool "$c"
@@ -254,7 +259,7 @@ cmd_canary(){
 }
 
 cmd_finish(){
-  need_root; [ "$(cur_ver)" = "$NEWVER" ] || die "run swap first"
+  need_root; is_new || die "run swap first"
   local c m
   for c in $(pools); do m=$(master "$c"); { [ -z "$m" ] || is_old "$m"; } && restart_pool "$c"; done
   restart_tool pipe_reader.php; restart_tool signal_receiver.php
