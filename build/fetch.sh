@@ -37,8 +37,8 @@ tarball https://archive.ubuntu.com/ubuntu/pool/universe/libm/libmcrypt/libmcrypt
 tarball https://archive.ubuntu.com/ubuntu/pool/universe/libm/libmcrypt/libmcrypt_2.5.8-3.1ubuntu1.diff.gz \
   libmcrypt_2.5.8-3.1ubuntu1.diff.gz c244480b3f84daa49ab40bfd52b410e32c0770d52cc4d213d9cec20275474cf9
 
-# PHP 7.4.33 + Remi Collet security backports, branch head 2026-10-25 (adds GHSA-m8rr-4c36-8gq4, GHSA-hrwm-9436-5mv3)
-gitpin https://github.com/remicollet/php-src-security.git php 575c10c4e0c9da6555557bc26fd93e52edeaf1fd
+# PHP 7.4.33 + Remi Collet security backports, branch head 2026-11-17 (backports of the 2026-11-19 PHP 8.2.36 security fixes)
+gitpin https://github.com/remicollet/php-src-security.git php 34a45b97de556bf436ed41b9ae2e10004973b339
 gitpin https://github.com/GNOME/libxml2.git libxml2 04af2cabb9f859c198b8a553c028a87481199410   # v2.13.9
 gitpin https://github.com/GNOME/libxslt.git libxslt 71be7a32637760d769b193d95e0c745ecb86b679   # v1.1.43 (1.1.44+ need libxml2 2.15)
 gitpin https://github.com/pnggroup/libpng.git libpng cd952f49f95bb27154ae77dbb103032d95f6e580  # v1.6.59
