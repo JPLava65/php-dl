@@ -1,6 +1,6 @@
 #!/bin/bash
 # xc-php74.sh - move an XC node from its bundled PHP 7.2/7.3 (or an earlier xc-php74 build) to the current
-# patched PHP 7.4 build. Release r2 (2026-10-31): Remi 575c10c4 + updated bundled libraries.
+# patched PHP 7.4 build. Release r3 (2026-11-19): Remi 34a45b97 (backports of the 2026-11-19 PHP security fixes) + r2 libraries.
 # Repo: https://github.com/JPLava65/php-dl
 #
 # Run the stages in order, checking the output of each before the next:
@@ -19,14 +19,14 @@ set -uo pipefail
 
 X=/home/xtreamcodes/iptv_xtream_codes
 P=$X/php
-D=/root/php74deploy-r2          # per release, so rollback always returns to what ran before THIS release
+D=/root/php74deploy-r3          # per release, so rollback always returns to what ran before THIS release
 PKG_URL=${PKG_URL:-https://raw.githubusercontent.com/JPLava65/php-dl/main/xc-php74.tar.gz}
-PKG_SHA=dd2f24e939d16b6971a23a3805ab0a3597795570700223b268fee4ca1b632ef0
+PKG_SHA=ee0dd4b7fa5a563d196f1351bb218bdb34e3760e37dc772f12cc313f8840b773
 IC_URL=${IC_URL:-https://downloads.ioncube.com/loader_downloads/ioncube_loaders_lin_x86-64.tar.gz}
 IONCUBE_SO=${IONCUBE_SO:-}          # optional: path to an ioncube_loader_lin_7.4.so already on this node
 EXT74=no-debug-non-zts-20190902
 NEWVER=7.4.33
-NEWBUILT='Oct 31 2026 20:57:05'      # build stamp of this release (php -v "built:"); tells r1 and r2 apart
+NEWBUILT='Nov 19 2026 20:21:30'      # build stamp of this release (php -v "built:"); tells r1, r2 and r3 apart
 TEST=${XC_TEST:-0}                  # test harness only: skips ionCube assertions
 
 say(){ printf '%s\n' "$*"; }

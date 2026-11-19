@@ -129,3 +129,20 @@ Fetch checks every download against pinned SHA-256 hashes and git commits. To pi
 | PHP's tests for libxml, dom, simplexml, xml, xsl, xmlreader, xmlwriter, curl, zlib, zip, mbstring, gd, date, pcre, json | 2,077 pass; 4 new message/format differences from libxml2 2.13 (warning → notice wording, entity-loader context), 1 from curl 8.17 (cookie expiry capped at 400 days); 1 previously failing test now passes |
 | Deploy script, r1 → r2 on a mock node (22.04) | check, stage, swap, canary, finish, verify OK; rollback returns to r1; re-stage on an r2 node stops |
 | ionCube | Not re-run (same PHP 7.4.33 ABI as r1); `stage` loads the 7.4 loader and stops if it doesn't |
+
+## Release r3 (2026-11-19): 19 Nov PHP security release, same deployment
+- PHP: Remi `PHP-7.4-security-backports` at `34a45b97` (was `575c10c4`): 12 fixes backported from 8.2.36 (README, "r3 fixes").
+- Libraries: unchanged from r2. Built with the r2 kit in the same Ubuntu 14.04 root; `build/fetch.sh` pins the new commit.
+- Package sha256 `ee0dd4b7fa5a563d196f1351bb218bdb34e3760e37dc772f12cc313f8840b773`, build stamp `built: Nov 19 2026 20:21:30`.
+- **Behaviour change:** `session.upload_progress.enabled` now defaults to off. A php.ini line setting it On overrides that.
+
+| Check (r3) | Result |
+|---|---|
+| Starts, only system C library linked | 14.04, 16.04, 18.04, 20.04, 22.04, 24.04 |
+| Module list | 47 on all six (same as r2) |
+| Functional test of every extension (23 checks) | Pass on all six |
+| `session.upload_progress.enabled` default | `0` on all six |
+| php-fpm (14.04, 24.04) | Runs as xtreamcodes; GET, POST; 200/200 requests; 20 out-of-memory requests each followed by a normal one: 20/20 OK, no crashes |
+| File sessions | Write, shrink (100 kB → 14 bytes on disk), read back OK |
+| PHP's tests for session, date, soap, phar, standard/http, sapi/cgi (14.04), r3 vs r2 | 1,278 vs 1,275 pass; 3 fixed by r3 (phar GHSA-68fq, http GHSA-f6gg, date bug73837); 0 new failures. Remaining failures on both: SOAP (not built in) and HTTP tests needing name resolution in the test root |
+| Deploy script, r2 → r3 on a mock node (22.04) | check, stage, swap, canary, finish OK; rollback returns to r2 (built Oct 31) |
